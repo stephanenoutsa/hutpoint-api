@@ -1,0 +1,445 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Platform ────────────────────────────────────────────────────────────────
+
+model PlatformConfig {
+  id                      String  @id @default("singleton")
+  returnRate              Float   @default(0.02)
+  platformMargin          Float   @default(0.80)
+  coalitionRedemptionRate Float   @default(2)
+  currencies              Json    // Array of { code, symbol, name, ptPrice, redemptionRate }
+  updatedAt               DateTime @updatedAt
+}
+
+// ─── Businesses ──────────────────────────────────────────────────────────────
+
+model Business {
+  id               String   @id @default(cuid())
+  businessName     String
+  industry         String
+  currency         String   @default("FCFA")
+  currencySymbol   String   @default("FCFA")
+  type             String   @default("standalone") // standalone | coalition
+  coalitionId      String?
+  suspended        Boolean  @default(false)
+  coalitionSuspended Boolean @default(false)
+  merchantTierKey  String   @default("micro")
+  bizReturnRate    Float?
+  redemptionRate   Float?
+  spendThreshold   Float    @default(0)
+  comebackWindowDays Int    @default(7)
+  creditFromBronze Boolean  @default(false)
+  visitFrequency   String   @default("monthly")
+  vipMultipliers   Json?    // [4,10,20,40] or null
+  surpriseMode     Boolean  @default(false)
+  newCustomerBonus Int      @default(10)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  coalition        Coalition?     @relation(fields: [coalitionId], references: [id])
+  wallet           BizWallet?
+  memberships      Membership[]
+  transactions     Transaction[]
+  agreements       Agreement[]
+  receipts         Receipt[]
+  feedbackItems    Feedback[]
+  feedbackRequests FeedbackRequest[]
+  redemptions      Redemption[]
+  pendingRedemptions PendingRedemption[]
+  raffleTickets    RaffleTicket[]
+  ledgerEntries    LedgerEntry[]
+  activityLogs     ActivityLog[]
+  reminders        Reminder[]
+  reorderRequests  ReorderRequest[]
+  spinTokens       SpinToken[]
+}
+
+model BizWallet {
+  id             String   @id @default(cuid())
+  businessId     String   @unique
+  points         Int      @default(0)
+  totalPurchased Int      @default(0)
+  totalSpent     Int      @default(0)
+  testPoints     Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+// ─── Coalitions ──────────────────────────────────────────────────────────────
+
+model Coalition {
+  id         String     @id @default(cuid())
+  name       String
+  spinPool   Int        @default(0)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  businesses    Business[]
+  coalWallets   CoalitionWallet[]
+  spinTokens    SpinToken[]
+}
+
+model CoalitionWallet {
+  id          String   @id @default(cuid())
+  customerId  String
+  coalitionId String
+  points      Int      @default(0)
+  lifetimePts Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  coalition   Coalition @relation(fields: [coalitionId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, coalitionId])
+}
+
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+model Customer {
+  id                  String   @id @default(cuid())
+  name                String
+  phone               String   @unique
+  email               String?
+  accountType         String   @default("personal") // personal | business
+  referralCode        String   @unique
+  referredBy          String?
+  referralFiredBizIds String[] @default([])
+  provisional         Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  memberships         Membership[]
+  transactions        Transaction[]
+  coalWallets         CoalitionWallet[]
+  feedbackItems       Feedback[]
+  feedbackRequests    FeedbackRequest[]
+  redemptions         Redemption[]
+  pendingRedemptions  PendingRedemption[]
+  raffleTickets       RaffleTicket[]
+  reminders           Reminder[]
+  reorderRequests     ReorderRequest[]
+  spinTokens          SpinToken[]
+  personalLedger      PersonalLedger[]
+  scannedReceipts     ScannedReceipt[]
+}
+
+// ─── Memberships ─────────────────────────────────────────────────────────────
+
+model Membership {
+  id           String   @id @default(cuid())
+  customerId   String
+  businessId   String
+  points       Int      @default(0)
+  lifetimePts  Int      @default(0)
+  minTierLevel Int      @default(1)
+  expiredAt    DateTime?
+  expiredPts   Int?
+  joinedAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, businessId])
+}
+
+// ─── Transactions ────────────────────────────────────────────────────────────
+
+model Transaction {
+  id                 String   @id @default(cuid())
+  businessId         String
+  customerId         String?
+  amount             Float    @default(0)
+  description        String?
+  type               String   // sale | rental | service | stay | appointment | order | session | consultation | spin | reorder_bonus | reminder_bonus | receipt_ack | admin_gift | points_expired | rescue_transfer
+  lineItems          Json?
+  pointsEarned       Int      @default(0)
+  pointsOwed         Int      @default(0)
+  pointsBlocked      Boolean  @default(false)
+  bonusApplied       Boolean  @default(false)
+  bonusReason        String?
+  multiplier         Float    @default(1)
+  coalitionSuspended Boolean  @default(false)
+  fromReceiptScan    Boolean  @default(false)
+  settledAt          DateTime?
+  createdAt          DateTime @default(now())
+
+  business           Business  @relation(fields: [businessId], references: [id])
+  customer           Customer? @relation(fields: [customerId], references: [id])
+}
+
+// ─── Agreements ──────────────────────────────────────────────────────────────
+
+model Agreement {
+  id                String   @id @default(cuid())
+  businessId        String
+  customerId        String
+  description       String
+  amount            Float
+  sym               String   @default("FCFA")
+  service           String?
+  paymentTerms      String?
+  serviceDate       String?
+  status            String   @default("pending_validation") // pending_validation | validated | rejected | void
+  amendments        Json     @default("[]")
+  rejectReason      String?
+  fromPersonalRecord Boolean @default(false)
+  personalRecordId  String?
+  validatedAt       DateTime?
+  rejectedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  business          Business @relation(fields: [businessId], references: [id])
+}
+
+// ─── Receipts ────────────────────────────────────────────────────────────────
+
+model Receipt {
+  id              String   @id @default(cuid())
+  transactionId   String?
+  customerId      String
+  businessId      String
+  description     String?
+  amount          Float
+  lineItems       Json?
+  status          String   @default("pending") // pending | acknowledged
+  acknowledgedAt  DateTime?
+  createdAt       DateTime @default(now())
+
+  business        Business @relation(fields: [businessId], references: [id])
+}
+
+model ScannedReceipt {
+  id            String   @id @default(cuid())
+  customerId    String
+  businessId    String
+  amount        Float
+  lineItems     Json?
+  receiptDate   String
+  receiptHash   String   @unique
+  pointsIssued  Int      @default(0)
+  pointsOwed    Int      @default(0)
+  deferred      Boolean  @default(false)
+  status        String   @default("confirmed")
+  scannedAt     DateTime @default(now())
+
+  customer      Customer @relation(fields: [customerId], references: [id])
+}
+
+// ─── Feedback ────────────────────────────────────────────────────────────────
+
+model Feedback {
+  id         String   @id @default(cuid())
+  customerId String
+  businessId String
+  receiptId  String?
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id])
+}
+
+model FeedbackRequest {
+  id         String   @id @default(cuid())
+  businessId String
+  customerId String
+  receiptId  String?
+  status     String   @default("pending") // pending | completed
+  createdAt  DateTime @default(now())
+
+  business   Business @relation(fields: [businessId], references: [id])
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([businessId, receiptId])
+}
+
+// ─── Redemptions ─────────────────────────────────────────────────────────────
+
+model Redemption {
+  id          String   @id @default(cuid())
+  customerId  String
+  businessId  String
+  discount    Float
+  ptsToRedeem Int
+  tierName    String?
+  createdAt   DateTime @default(now())
+
+  customer    Customer @relation(fields: [customerId], references: [id])
+  business    Business @relation(fields: [businessId], references: [id])
+}
+
+model PendingRedemption {
+  id          String   @id @default(cuid())
+  customerId  String
+  businessId  String
+  discount    Float
+  ptsToRedeem Int
+  tierName    String?
+  code        String   @unique
+  status      String   @default("pending") // pending | confirmed | cancelled
+  confirmedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  customer    Customer @relation(fields: [customerId], references: [id])
+  business    Business @relation(fields: [businessId], references: [id])
+}
+
+// ─── Spin ────────────────────────────────────────────────────────────────────
+
+model SpinToken {
+  id          String   @id @default(cuid())
+  customerId  String
+  businessId  String?
+  coalitionId String?
+  isCoal      Boolean  @default(false)
+  used        Boolean  @default(false)
+  usedAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  customer    Customer   @relation(fields: [customerId], references: [id])
+  business    Business?  @relation(fields: [businessId], references: [id])
+  coalition   Coalition? @relation(fields: [coalitionId], references: [id])
+}
+
+// ─── Raffle ──────────────────────────────────────────────────────────────────
+
+model RaffleTicket {
+  id         String   @id @default(cuid())
+  customerId String
+  businessId String
+  monthKey   String   // "YYYY-MM"
+  used       Boolean  @default(false)
+  fromScan   Boolean  @default(false)
+  fromSettlement Boolean @default(false)
+  createdAt  DateTime @default(now())
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id])
+
+  @@index([monthKey])
+}
+
+model RaffleDraw {
+  id              String   @id @default(cuid())
+  monthKey        String   @unique
+  winnerId        String
+  winnerName      String
+  biggestPurchase Float
+  cashback        Float
+  cashbackPts     Int      @default(0)
+  prizePool       Float
+  uniqueBuyers    Int
+  totalTickets    Int
+  createdAt       DateTime @default(now())
+}
+
+// ─── Bonuses ─────────────────────────────────────────────────────────────────
+
+model Bonus {
+  id         String   @id @default(cuid())
+  customerId String
+  businessId String
+  type       String   // double_points
+  multiplier Float    @default(2)
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+// ─── Reminders ───────────────────────────────────────────────────────────────
+
+model Reminder {
+  id         String   @id @default(cuid())
+  customerId String
+  businessId String
+  receiptId  String?
+  product    String?
+  days       Int
+  remindAt   DateTime
+  dismissed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  business   Business @relation(fields: [businessId], references: [id])
+}
+
+// ─── Reorder Requests ────────────────────────────────────────────────────────
+
+model ReorderRequest {
+  id            String   @id @default(cuid())
+  customerId    String
+  businessId    String
+  product       String?
+  transactionId String?
+  status        String   @default("pending") // pending | fulfilled
+  createdAt     DateTime @default(now())
+
+  customer      Customer @relation(fields: [customerId], references: [id])
+  business      Business @relation(fields: [businessId], references: [id])
+}
+
+// ─── Ledger ──────────────────────────────────────────────────────────────────
+
+model LedgerEntry {
+  id           String   @id @default(cuid())
+  type         String   // revenue | reimbursement | rescue_transfer
+  businessId   String?
+  pts          Int
+  amount       Float
+  currency     String   @default("FCFA")
+  sym          String   @default("FCFA")
+  description  String?
+  createdAt    DateTime @default(now())
+
+  business     Business? @relation(fields: [businessId], references: [id])
+}
+
+// ─── Personal Ledger ─────────────────────────────────────────────────────────
+
+model PersonalLedger {
+  id               String   @id @default(cuid())
+  customerId       String
+  vendorName       String
+  vendorPhone      String?
+  description      String
+  totalAmount      Float
+  paymentTerms     String?
+  dueDate          String?
+  payments         Json     @default("[]")
+  amendments       Json     @default("[]")
+  inviteCode       String   @unique
+  inviteSentAt     DateTime?
+  linkedBusinessId String?
+  status           String   @default("active") // active | linked
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  customer         Customer @relation(fields: [customerId], references: [id])
+}
+
+// ─── Activity Log ────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  businessId String
+  role       String
+  action     String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  business   Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt(sort: Desc)])
+}
