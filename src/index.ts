@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 
+import bootstrap   from "./routes/bootstrap.js";
 import businesses  from "./routes/businesses.js";
 import customers   from "./routes/customers.js";
 import transactions from "./routes/transactions.js";
@@ -36,6 +37,7 @@ app.use(
 // ─── Health check ─────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => c.json({ ok: true, service: "hutpoint-api", ts: new Date().toISOString() }));
+app.route("/bootstrap", bootstrap);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
@@ -62,5 +64,5 @@ app.onError((err, c) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const port = Number(process.env.PORT ?? 3001);
-console.log(`hutpoint-api listening on http://localhost:${port}`);
-serve({ fetch: app.fetch, port });
+console.log(`hutpoint-api listening on http://0.0.0.0:${port}`);
+serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
