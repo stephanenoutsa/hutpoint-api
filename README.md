@@ -10,7 +10,7 @@ Built with **Hono + TypeScript + Prisma + PostgreSQL** (Supabase recommended). H
 
 ```
 prisma/
-  schema.prisma          # Full database schema (18 models)
+  schema.prisma          # Full database schema (24 models)
 src/
   index.ts               # Server entry point — middleware, routes, error handling
   db.ts                  # Prisma client singleton
@@ -23,6 +23,7 @@ src/
     auth.ts              # Admin API key guard
     error.ts             # errorResponse helper
   routes/
+    bootstrap.ts         # GET /bootstrap — full state snapshot for frontend hydration
     businesses.ts        # Register, wallet top-up, settings, tier management, churn
     customers.ts         # Register, join business, spin wheel, point transfer
     transactions.ts      # Log sales, scan receipts, feedback, reminders, reorders
@@ -60,11 +61,11 @@ cp .env.example .env
 Edit `.env` and fill in all values:
 
 ```env
-# Direct connection — used by Prisma for migrations
-DATABASE_URL="postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres"
+# Pooled connection — used by the running API (port 6543 with pgbouncer)
+DATABASE_URL="postgresql://postgres:[PASSWORD]@[HOST]:6543/postgres?pgbouncer=true"
 
-# Pooled connection — used by the running API
-DIRECT_URL="postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:6543/postgres?pgbouncer=true"
+# Direct connection — used by Prisma for migrations (port 5432)
+DIRECT_URL="postgresql://postgres:[PASSWORD]@[HOST]:5432/postgres"
 
 # Secret used to verify admin requests (set a long random string)
 ADMIN_API_KEY="your-secret-admin-key"
@@ -76,8 +77,8 @@ PORT=3001
 **Getting your Supabase connection strings:**
 1. Go to [supabase.com](https://supabase.com) and create a project
 2. Navigate to **Settings → Database → Connection string**
-3. Copy the **URI** (port 5432) → `DATABASE_URL`
-4. Copy the **URI** with **PgBouncer** (port 6543) → `DIRECT_URL`
+3. Copy the **Transaction pooler URI** (port 6543) → `DATABASE_URL`
+4. Copy the **Session pooler or direct URI** (port 5432) → `DIRECT_URL`
 
 ### 3. Generate the Prisma client
 
@@ -120,31 +121,27 @@ npm start           # Runs the compiled output
 
 ---
 
-## Deploying
-
-### Railway (recommended — simple, free tier)
+## Deploying to Railway
 
 1. Push the project to a GitHub repo
 2. Go to [railway.app](https://railway.app) → **New Project → Deploy from GitHub**
 3. Select the `hutpoint-api` repo
-4. Add all environment variables from `.env` in the Railway dashboard under **Variables**
-5. Railway auto-detects the start command (`npm start`) and deploys
+4. Under **Variables**, add all values from your `.env`
+5. Under the public domain settings, set the **target port** to `3001` and add `PORT=3001` as an environment variable so the app and Railway's proxy agree on the port
+6. Railway auto-detects the start command (`npm start`) and deploys
 
-### Render (alternative)
-
-1. Go to [render.com](https://render.com) → **New Web Service**
-2. Connect your GitHub repo
-3. Set build command: `npm install && npm run build`
-4. Set start command: `npm start`
-5. Add environment variables in the Render dashboard
-
-> **Note:** Render's free tier spins down services after inactivity, causing cold starts of ~30s. Railway's free tier does not have this issue.
+> The server binds to `0.0.0.0` so Railway's proxy can route external traffic to it.
 
 ---
 
 ## API reference
 
 All endpoints return `{ ok: true, ... }` on success or `{ ok: false, error: "..." }` on failure.
+
+### Bootstrap
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/bootstrap` | Returns all platform state in one response — used by the frontend to hydrate on mount |
 
 ### Businesses
 | Method | Path | Description |
@@ -258,7 +255,7 @@ x-admin-key: your-secret-admin-key
 
 ## Point expiry
 
-The `/transactions/expire-points` endpoint should be called on a schedule (e.g. nightly). On Railway or Render you can set up a cron job, or use a free service like [cron-job.org](https://cron-job.org) to call it:
+The `/transactions/expire-points` endpoint should be called on a schedule (e.g. nightly). Use a free service like [cron-job.org](https://cron-job.org) to call it:
 
 ```
 POST https://your-api.railway.app/transactions/expire-points
