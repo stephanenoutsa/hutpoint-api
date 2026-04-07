@@ -3,16 +3,18 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { swaggerUI } from "@hono/swagger-ui";
 
-import bootstrap   from "./routes/bootstrap.js";
-import businesses  from "./routes/businesses.js";
-import customers   from "./routes/customers.js";
+import bootstrap    from "./routes/bootstrap.js";
+import businesses   from "./routes/businesses.js";
+import customers    from "./routes/customers.js";
 import transactions from "./routes/transactions.js";
-import agreements  from "./routes/agreements.js";
-import redemptions from "./routes/redemptions.js";
-import coalitions  from "./routes/coalitions.js";
-import raffle      from "./routes/raffle.js";
-import admin       from "./routes/admin.js";
+import agreements   from "./routes/agreements.js";
+import redemptions  from "./routes/redemptions.js";
+import coalitions   from "./routes/coalitions.js";
+import raffle       from "./routes/raffle.js";
+import admin        from "./routes/admin.js";
+import { spec }     from "./openapi.js";
 
 const app = new Hono();
 
@@ -37,6 +39,12 @@ app.use(
 // ─── Health check ─────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => c.json({ ok: true, service: "hutpoint-api", ts: new Date().toISOString() }));
+
+// ─── Swagger UI ───────────────────────────────────────────────────────────────
+
+app.get("/docs/spec", (c) => c.json(spec));
+app.get("/docs", swaggerUI({ url: "/docs/spec" }));
+
 app.route("/bootstrap", bootstrap);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
