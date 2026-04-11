@@ -83,7 +83,7 @@ app.post(
 app.post(
   "/login",
   zValidator("json", z.object({
-    phone:    z.string().min(1),
+    phone:    z.string().min(1).transform(v => v.replace(/\s+/g, "")),
     password: z.string().min(1),
   })),
   async (c) => {
@@ -130,7 +130,7 @@ app.post(
 app.post(
   "/admin/login",
   zValidator("json", z.object({
-    phone:    z.string().min(1),
+    phone:    z.string().min(1).transform(v => v.replace(/\s+/g, "")),
     password: z.string().min(1),
   })),
   async (c) => {
