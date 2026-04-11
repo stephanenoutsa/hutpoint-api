@@ -21,6 +21,12 @@ export const spec = {
         name: "x-admin-key",
         description: "Required for all `/admin` endpoints and `POST /raffle/draw`.",
       },
+      BearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "JWT issued by `POST /auth/login` or `POST /auth/register`. Required for business registration and member management.",
+      },
     },
     schemas: {
       Ok: {
@@ -159,6 +165,37 @@ export const spec = {
           createdAt:   { type: "string", format: "date-time" },
         },
       },
+      User: {
+        type: "object",
+        properties: {
+          id:        { type: "string" },
+          firstName: { type: "string" },
+          lastName:  { type: "string" },
+          phone:     { type: "string" },
+          isAdmin:   { type: "boolean" },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      BusinessMember: {
+        type: "object",
+        properties: {
+          id:          { type: "string" },
+          userId:      { type: "string" },
+          businessId:  { type: "string" },
+          role:        { type: "string", enum: ["owner", "co_owner", "manager", "supervisor"] },
+          invitedById: { type: "string", nullable: true },
+          createdAt:   { type: "string", format: "date-time" },
+          user: {
+            type: "object",
+            properties: {
+              id:        { type: "string" },
+              firstName: { type: "string" },
+              lastName:  { type: "string" },
+              phone:     { type: "string" },
+            },
+          },
+        },
+      },
     },
     responses: {
       NotFound: {
@@ -170,7 +207,11 @@ export const spec = {
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       },
       Unauthorized: {
-        description: "Missing or invalid admin key",
+        description: "Missing or invalid admin key / JWT token",
+        content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+      },
+      Forbidden: {
+        description: "Authenticated but insufficient role",
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       },
     },
@@ -178,6 +219,7 @@ export const spec = {
 
   // ─── Tags ────────────────────────────────────────────────────────────────────
   tags: [
+    { name: "Auth",          description: "User registration, login, and session management" },
     { name: "Bootstrap",     description: "Full state snapshot — used by frontend to hydrate on mount" },
     { name: "Businesses",    description: "Register and manage merchant businesses" },
     { name: "Customers",     description: "Register and manage loyalty programme members" },
@@ -191,6 +233,174 @@ export const spec = {
 
   // ─── Paths ───────────────────────────────────────────────────────────────────
   paths: {
+
+    // ── Auth ───────────────────────────────────────────────────────────────────
+    "/auth/register": {
+      post: {
+        tags: ["Auth"],
+        summary: "Register a new user account",
+        description: "Creates a User and auto-creates a linked Customer record. Returns a JWT valid for 7 days.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["firstName", "lastName", "phone", "password"],
+                properties: {
+                  firstName: { type: "string", example: "Amara" },
+                  lastName:  { type: "string", example: "Diallo" },
+                  phone:     { type: "string", example: "+2250700000000" },
+                  password:  { type: "string", minLength: 6 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "User created",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok:    { type: "boolean" },
+                    token: { type: "string" },
+                    user:  { $ref: "#/components/schemas/User" },
+                  },
+                },
+              },
+            },
+          },
+          409: { description: "Phone already registered", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+        },
+      },
+    },
+    "/auth/login": {
+      post: {
+        tags: ["Auth"],
+        summary: "Log in with phone and password",
+        description: "Returns a JWT and the user's profile including their business memberships.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["phone", "password"],
+                properties: {
+                  phone:    { type: "string" },
+                  password: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "Login successful",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok:    { type: "boolean" },
+                    token: { type: "string" },
+                    user: {
+                      allOf: [
+                        { $ref: "#/components/schemas/User" },
+                        {
+                          type: "object",
+                          properties: {
+                            businesses: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                properties: {
+                                  role:     { type: "string", enum: ["owner", "co_owner", "manager", "supervisor"] },
+                                  business: { $ref: "#/components/schemas/Business" },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/auth/admin/login": {
+      post: {
+        tags: ["Auth"],
+        summary: "Log in as a platform admin",
+        description: "Same credentials flow as `/auth/login` but only succeeds if the user has `isAdmin: true`. Used exclusively by the admin app.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["phone", "password"],
+                properties: {
+                  phone:    { type: "string" },
+                  password: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "Admin login successful",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok:    { type: "boolean" },
+                    token: { type: "string" },
+                    user:  { $ref: "#/components/schemas/User" },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/auth/me": {
+      get: {
+        tags: ["Auth"],
+        summary: "Get current user profile",
+        description: "Returns the authenticated user's profile and all business memberships.",
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Current user",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok:   { type: "boolean" },
+                    user: { $ref: "#/components/schemas/User" },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
 
     // ── Bootstrap ──────────────────────────────────────────────────────────────
     "/bootstrap": {
@@ -246,6 +456,8 @@ export const spec = {
       post: {
         tags: ["Businesses"],
         summary: "Register a new business",
+        description: "Requires authentication. The authenticated user is automatically assigned the `owner` role for the new business.",
+        security: [{ BearerAuth: [] }],
         requestBody: {
           required: true,
           content: {
@@ -400,6 +612,101 @@ export const spec = {
         summary: "Get churn signal for a business",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: { 200: { description: "Churn signal", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, churn: { type: "object" } } } } } } },
+      },
+    },
+    "/businesses/{id}/members": {
+      get: {
+        tags: ["Businesses"],
+        summary: "List staff members of a business",
+        description: "Returns all users who have a role in this business. Requires the caller to be a member.",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: {
+            description: "Members list",
+            content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, members: { type: "array", items: { $ref: "#/components/schemas/BusinessMember" } } } } } },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          403: { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/businesses/{id}/members/invite": {
+      post: {
+        tags: ["Businesses"],
+        summary: "Invite a registered user as a staff member",
+        description: "Looks up a user by phone number and assigns them a role. Caller must be `owner` or `co_owner`.",
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["phone", "role"],
+                properties: {
+                  phone: { type: "string", example: "+2250700000001" },
+                  role:  { type: "string", enum: ["co_owner", "manager", "supervisor"] },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "Member added",
+            content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, member: { $ref: "#/components/schemas/BusinessMember" } } } } },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          403: { $ref: "#/components/responses/Forbidden" },
+          404: { $ref: "#/components/responses/NotFound" },
+          409: { description: "User is already a member", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+        },
+      },
+    },
+    "/businesses/{id}/members/{memberId}/role": {
+      patch: {
+        tags: ["Businesses"],
+        summary: "Change a member's role",
+        description: "Caller must be `owner` or `co_owner`. Cannot change the `owner` role.",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "id",       in: "path", required: true, schema: { type: "string" } },
+          { name: "memberId", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", required: ["role"], properties: { role: { type: "string", enum: ["co_owner", "manager", "supervisor"] } } },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Role updated", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, member: { $ref: "#/components/schemas/BusinessMember" } } } } } },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          403: { $ref: "#/components/responses/Forbidden" },
+          404: { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/businesses/{id}/members/{memberId}": {
+      delete: {
+        tags: ["Businesses"],
+        summary: "Remove a staff member",
+        description: "Caller must be `owner` or `co_owner`. Cannot remove the business owner.",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "id",       in: "path", required: true, schema: { type: "string" } },
+          { name: "memberId", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          200: { description: "Member removed", content: { "application/json": { schema: { $ref: "#/components/schemas/Ok" } } } },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          403: { $ref: "#/components/responses/Forbidden" },
+          404: { $ref: "#/components/responses/NotFound" },
+        },
       },
     },
 
@@ -1083,9 +1390,9 @@ export const spec = {
       get: {
         tags: ["Admin"],
         summary: "Platform overview counts",
-        security: [{ AdminKey: [] }],
+        security: [{ AdminKey: [] }, { BearerAuth: [] }],
         responses: {
-          200: { description: "Stats", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, businesses: { type: "number" }, customers: { type: "number" }, transactions: { type: "number" } } } } } },
+          200: { description: "Stats", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, users: { type: "number" }, businesses: { type: "number" }, customers: { type: "number" }, transactions: { type: "number" } } } } } },
           401: { $ref: "#/components/responses/Unauthorized" },
         },
       },
@@ -1176,8 +1483,76 @@ export const spec = {
       get: {
         tags: ["Admin"],
         summary: "View the last 200 activity log entries",
-        security: [{ AdminKey: [] }],
+        security: [{ AdminKey: [] }, { BearerAuth: [] }],
         responses: { 200: { description: "Activity log", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, log: { type: "array", items: { type: "object" } } } } } } } },
+      },
+    },
+    "/admin/make-admin": {
+      post: {
+        tags: ["Admin"],
+        summary: "Grant admin status to a registered user (bootstrap)",
+        description: "Looks up a user by phone number and sets `isAdmin: true`. Use this once — with the `x-admin-key` — to create the first platform admin. Subsequent promotions can be done from the admin app's Users tab.",
+        security: [{ AdminKey: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", required: ["phone"], properties: { phone: { type: "string", example: "+2250700000000" } } },
+            },
+          },
+        },
+        responses: {
+          200: { description: "User granted admin", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } } } } } },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          404: { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/admin/users": {
+      get: {
+        tags: ["Admin"],
+        summary: "List all registered users",
+        description: "Returns every user account with their admin status and business membership count.",
+        security: [{ AdminKey: [] }, { BearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Users list",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok:    { type: "boolean" },
+                    users: {
+                      type: "array",
+                      items: {
+                        allOf: [
+                          { $ref: "#/components/schemas/User" },
+                          { type: "object", properties: { _count: { type: "object", properties: { businessMembers: { type: "number" } } } } },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/admin/users/{id}/toggle-admin": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Toggle admin status for a user",
+        description: "Flips `isAdmin` between `true` and `false`. An admin cannot change their own status.",
+        security: [{ AdminKey: [] }, { BearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "Admin status toggled", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, user: { $ref: "#/components/schemas/User" } } } } } },
+          401: { $ref: "#/components/responses/Unauthorized" },
+          404: { $ref: "#/components/responses/NotFound" },
+        },
       },
     },
   },
