@@ -212,7 +212,7 @@ app.get("/activity", async (c) => {
 // Bootstrap: grant admin to a user by phone (x-admin-key only — used once to set up the first admin)
 app.post(
   "/make-admin",
-  zValidator("json", z.object({ phone: z.string().min(1) })),
+  zValidator("json", z.object({ phone: z.string().min(1).transform(v => v.replace(/\s+/g, "")) })),
   async (c) => {
     const { phone } = c.req.valid("json");
     const user = await db.user.findUnique({ where: { phone } });

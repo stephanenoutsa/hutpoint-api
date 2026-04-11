@@ -13,7 +13,7 @@ app.post(
   "/",
   zValidator("json", z.object({
     name:          z.string().min(1),
-    phone:         z.string().min(1),
+    phone:         z.string().min(1).transform(v => v.replace(/\s+/g, "")),
     email:         z.string().email().optional(),
     accountType:   z.enum(["personal", "business"]).default("personal"),
     referralInput: z.string().optional(),
@@ -43,7 +43,7 @@ app.post(
 
 app.post(
   "/inline",
-  zValidator("json", z.object({ phone: z.string().min(1) })),
+  zValidator("json", z.object({ phone: z.string().min(1).transform(v => v.replace(/\s+/g, "")) })),
   async (c) => {
     const { phone } = c.req.valid("json");
     const trimmed = phone.trim();

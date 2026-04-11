@@ -318,7 +318,7 @@ app.post(
   "/:id/members/invite",
   requireAuth,
   zValidator("json", z.object({
-    phone: z.string().min(1),
+    phone: z.string().min(1).transform(v => v.replace(/\s+/g, "")),
     role:  z.enum(INVITE_ROLES),
   })),
   async (c) => {

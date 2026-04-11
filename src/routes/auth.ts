@@ -32,7 +32,7 @@ app.post(
   zValidator("json", z.object({
     firstName: z.string().min(1),
     lastName:  z.string().min(1),
-    phone:     z.string().min(1),
+    phone:     z.string().min(1).transform(v => v.replace(/\s+/g, "")),
     password:  z.string().min(6),
   })),
   async (c) => {
