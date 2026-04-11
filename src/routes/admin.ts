@@ -177,10 +177,11 @@ app.patch(
 // ─── Overview stats ───────────────────────────────────────────────────────────
 
 app.get("/stats", async (c) => {
-  const [bizCount, custCount, txCount, revenue] = await Promise.all([
+  const [bizCount, custCount, txCount, userCount, revenue] = await Promise.all([
     db.business.count(),
     db.customer.count(),
     db.transaction.count(),
+    db.user.count(),
     db.transaction.aggregate({ where: { type: "sale" }, _sum: { amount: true } }),
   ]);
   return c.json({
@@ -189,6 +190,7 @@ app.get("/stats", async (c) => {
       businesses: bizCount,
       customers: custCount,
       transactions: txCount,
+      users: userCount,
       totalRevenue: revenue._sum.amount ?? 0,
     },
   });
@@ -203,6 +205,53 @@ app.get("/activity", async (c) => {
     include: { business: true },
   });
   return c.json({ ok: true, logs });
+});
+
+// ─── Platform user management ─────────────────────────────────────────────────
+
+// Bootstrap: grant admin to a user by phone (x-admin-key only — used once to set up the first admin)
+app.post(
+  "/make-admin",
+  zValidator("json", z.object({ phone: z.string().min(1) })),
+  async (c) => {
+    const { phone } = c.req.valid("json");
+    const user = await db.user.findUnique({ where: { phone } });
+    if (!user) return errorResponse(c, 404, "No registered user with that phone number");
+    const updated = await db.user.update({
+      where: { phone },
+      data: { isAdmin: true },
+    });
+    return c.json({
+      ok: true,
+      user: { id: updated.id, firstName: updated.firstName, lastName: updated.lastName, phone: updated.phone, isAdmin: updated.isAdmin },
+    });
+  },
+);
+
+// List all registered users (with admin status)
+app.get("/users", async (c) => {
+  const users = await db.user.findMany({
+    select: {
+      id: true, firstName: true, lastName: true, phone: true,
+      isAdmin: true, createdAt: true,
+      _count: { select: { businessMembers: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return c.json({ ok: true, users });
+});
+
+// Toggle admin status for a user
+app.patch("/users/:id/toggle-admin", async (c) => {
+  const id = c.req.param("id");
+  const user = await db.user.findUnique({ where: { id }, select: { id: true, isAdmin: true } });
+  if (!user) return errorResponse(c, 404, "User not found");
+  const updated = await db.user.update({
+    where: { id },
+    data: { isAdmin: !user.isAdmin },
+    select: { id: true, firstName: true, lastName: true, phone: true, isAdmin: true },
+  });
+  return c.json({ ok: true, user: updated });
 });
 
 export default app;

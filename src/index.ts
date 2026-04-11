@@ -5,6 +5,7 @@ import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { swaggerUI } from "@hono/swagger-ui";
 
+import auth         from "./routes/auth.js";
 import bootstrap    from "./routes/bootstrap.js";
 import businesses   from "./routes/businesses.js";
 import customers    from "./routes/customers.js";
@@ -31,7 +32,7 @@ app.use(
       "https://hutpoint.vercel.app",
       "https://hutpoint-admin.vercel.app",
     ],
-    allowHeaders: ["Content-Type", "x-admin-key"],
+    allowHeaders: ["Content-Type", "x-admin-key", "Authorization"],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
@@ -45,6 +46,7 @@ app.get("/health", (c) => c.json({ ok: true, service: "hutpoint-api", ts: new Da
 app.get("/docs/spec", (c) => c.json(spec));
 app.get("/docs", swaggerUI({ url: "/docs/spec" }));
 
+app.route("/auth",      auth);
 app.route("/bootstrap", bootstrap);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

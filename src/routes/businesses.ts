@@ -3,18 +3,21 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { db } from "../db.js";
 import { errorResponse } from "../middleware/error.js";
+import { requireAuth } from "../middleware/requireAuth.js";
 import { toNullableJson } from "../lib/json.js";
 import {
   buildScaledTiers, buildB2BTiers, getMerchantTierDef,
   PLATFORM_DEFAULTS, MERCHANT_TIERS, CURRENCIES,
 } from "../lib/tiers.js";
 
-const app = new Hono();
+type Env = { Variables: { userId: string } };
+const app = new Hono<Env>();
 
 // ─── Register business ────────────────────────────────────────────────────────
 
 app.post(
   "/",
+  requireAuth,
   zValidator("json", z.object({
     businessName: z.string().min(1),
     industry:     z.string().min(1),
@@ -23,6 +26,7 @@ app.post(
     merchantTierKey: z.string().optional(),
   })),
   async (c) => {
+    const userId = c.get("userId") as string;
     const data = c.req.valid("json");
     const TEST_PTS = 2000;
 
@@ -32,6 +36,9 @@ app.post(
         merchantTierKey: data.merchantTierKey ?? "micro",
         wallet: {
           create: { points: TEST_PTS, totalPurchased: TEST_PTS, testPoints: true },
+        },
+        members: {
+          create: { userId, role: "owner" },
         },
       },
       include: { wallet: true },
@@ -279,5 +286,141 @@ app.get("/:id/churn", async (c) => {
   const signal = getMerchantChurnSignal(business, txs, wallet ?? {}, ledger);
   return c.json({ ok: true, signal });
 });
+
+// ─── List members ─────────────────────────────────────────────────────────────
+
+app.get("/:id/members", requireAuth, async (c) => {
+  const businessId = c.req.param("id");
+  const userId = c.get("userId") as string;
+
+  const isMember = await db.businessMember.findUnique({
+    where: { userId_businessId: { userId, businessId } },
+  });
+  if (!isMember) return errorResponse(c, 403, "Forbidden");
+
+  const members = await db.businessMember.findMany({
+    where: { businessId },
+    include: {
+      user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return c.json({ ok: true, members });
+});
+
+// ─── Invite member ────────────────────────────────────────────────────────────
+
+const INVITE_ROLES = ["co_owner", "manager", "supervisor"] as const;
+const PRIVILEGED_ROLES = ["owner", "co_owner"] as const;
+
+app.post(
+  "/:id/members/invite",
+  requireAuth,
+  zValidator("json", z.object({
+    phone: z.string().min(1),
+    role:  z.enum(INVITE_ROLES),
+  })),
+  async (c) => {
+    const businessId = c.req.param("id");
+    const inviterId = c.get("userId") as string;
+    const { phone, role } = c.req.valid("json");
+
+    // Only owners and co-owners can invite
+    const inviter = await db.businessMember.findUnique({
+      where: { userId_businessId: { userId: inviterId, businessId } },
+    });
+    if (!inviter || !(PRIVILEGED_ROLES as readonly string[]).includes(inviter.role)) {
+      return errorResponse(c, 403, "Only owners and co-owners can invite members");
+    }
+
+    const target = await db.user.findUnique({ where: { phone } });
+    if (!target) return errorResponse(c, 404, "No registered user found with that phone number");
+
+    const already = await db.businessMember.findUnique({
+      where: { userId_businessId: { userId: target.id, businessId } },
+    });
+    if (already) return errorResponse(c, 409, "User is already a member of this business");
+
+    const member = await db.businessMember.create({
+      data: { userId: target.id, businessId, role, invitedById: inviterId },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+      },
+    });
+
+    return c.json({ ok: true, member }, 201);
+  },
+);
+
+// ─── Change member role ───────────────────────────────────────────────────────
+
+app.patch(
+  "/:id/members/:memberId/role",
+  requireAuth,
+  zValidator("json", z.object({ role: z.enum(INVITE_ROLES) })),
+  async (c) => {
+    const businessId  = c.req.param("id");
+    const memberId    = c.req.param("memberId");
+    const requesterId = c.get("userId") as string;
+    const { role }    = c.req.valid("json");
+
+    const requester = await db.businessMember.findUnique({
+      where: { userId_businessId: { userId: requesterId, businessId } },
+    });
+    if (!requester || !(PRIVILEGED_ROLES as readonly string[]).includes(requester.role)) {
+      return errorResponse(c, 403, "Only owners and co-owners can change roles");
+    }
+
+    const target = await db.businessMember.findUnique({ where: { id: memberId } });
+    if (!target || target.businessId !== businessId) {
+      return errorResponse(c, 404, "Member not found");
+    }
+    if (target.role === "owner") {
+      return errorResponse(c, 403, "Cannot change the role of the business owner");
+    }
+
+    const updated = await db.businessMember.update({
+      where: { id: memberId },
+      data: { role },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+      },
+    });
+
+    return c.json({ ok: true, member: updated });
+  },
+);
+
+// ─── Remove member ────────────────────────────────────────────────────────────
+
+app.delete(
+  "/:id/members/:memberId",
+  requireAuth,
+  async (c) => {
+    const businessId  = c.req.param("id");
+    const memberId    = c.req.param("memberId");
+    const requesterId = c.get("userId") as string;
+
+    const requester = await db.businessMember.findUnique({
+      where: { userId_businessId: { userId: requesterId, businessId } },
+    });
+    if (!requester || !(PRIVILEGED_ROLES as readonly string[]).includes(requester.role)) {
+      return errorResponse(c, 403, "Only owners and co-owners can remove members");
+    }
+
+    const target = await db.businessMember.findUnique({ where: { id: memberId } });
+    if (!target || target.businessId !== businessId) {
+      return errorResponse(c, 404, "Member not found");
+    }
+    if (target.role === "owner") {
+      return errorResponse(c, 403, "Cannot remove the business owner");
+    }
+
+    await db.businessMember.delete({ where: { id: memberId } });
+
+    return c.json({ ok: true });
+  },
+);
 
 export default app;
